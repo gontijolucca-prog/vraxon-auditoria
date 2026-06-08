@@ -66,111 +66,112 @@ async function askGemini(prompt: string): Promise<string> {
   return json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
 }
 
-// ─── Google Places API (NEW) ───
-// A API legacy (maps.googleapis.com/maps/api/place) já não é ativável em projetos novos.
-// Usamos a Places API (New) em places.googleapis.com/v1, com X-Goog-FieldMask.
-const KEY = process.env.GOOGLE_PLACES_API_KEY;
-const PLACES = "https://places.googleapis.com/v1";
+// ─── Dados do Google Maps via SerpApi ───
+// Sem chave Google / sem cartão: a SerpApi faz o scrape do Google Maps e devolve
+// dados reais (nota, avaliações, concorrentes). Token grátis em serpapi.com.
+const SERP_KEY = process.env.SERPAPI_KEY;
+const SERP = "https://serpapi.com/search.json";
 
-type PlaceLite = { id: string; displayName?: { text?: string }; types?: string[]; primaryType?: string };
-
-// Procura por texto (Text Search New). Devolve a lista de places (já normalizada).
-async function searchPlace(query: string): Promise<PlaceLite[]> {
-  const res = await fetch(`${PLACES}/places:searchText`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": KEY ?? "",
-      "X-Goog-FieldMask": "places.id,places.displayName,places.types,places.primaryType",
-    },
-    body: JSON.stringify({ textQuery: query, languageCode: "pt", regionCode: "PT" }),
-  });
-  const json = await res.json();
-  if (!res.ok) console.log("[SEARCH] error:", JSON.stringify(json).slice(0, 300));
-  console.log(`[SEARCH] q="${query}" results=${json.places?.length ?? 0}`);
-  return json.places ?? [];
-}
-
-type PlaceDetails = {
-  id?: string;
-  displayName?: { text?: string };
+type SerpPlace = {
+  title?: string;
   rating?: number;
-  userRatingCount?: number;
-  reviews?: { rating?: number; text?: { text?: string }; authorAttribution?: { displayName?: string } }[];
-  photos?: unknown[];
-  regularOpeningHours?: unknown;
+  reviews?: number;
+  type?: string;
   types?: string[];
-  primaryType?: string;
-  primaryTypeDisplayName?: { text?: string };
-  location?: { latitude?: number; longitude?: number };
+  gps_coordinates?: { latitude?: number; longitude?: number };
+  hours?: unknown;
+  operating_hours?: unknown;
+  website?: string;
+  data_id?: string;
+  thumbnail?: string;
+  address?: string;
 };
 
-async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
-  const fields =
-    "id,displayName,rating,userRatingCount,reviews,photos,regularOpeningHours,types,primaryType,primaryTypeDisplayName,location";
-  const res = await fetch(`${PLACES}/places/${encodeURIComponent(placeId)}`, {
-    headers: {
-      "X-Goog-Api-Key": KEY ?? "",
-      "X-Goog-FieldMask": fields,
-      "Accept-Language": "pt",
-    },
-  });
-  const json = await res.json();
-  if (!res.ok) console.log("[DETAILS] error:", JSON.stringify(json).slice(0, 300));
-  console.log(`[DETAILS] id="${placeId}" name=${json.displayName?.text ?? "?"}`);
-  return json;
+// Procura o negócio (Text Search no Google Maps via SerpApi).
+async function serpFind(query: string): Promise<SerpPlace | null> {
+  try {
+    const url = `${SERP}?engine=google_maps&type=search&q=${encodeURIComponent(query)}&hl=pt&gl=pt&api_key=${SERP_KEY}`;
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.error) {
+      console.log("[SERP find] error:", json.error);
+      return null;
+    }
+    const place: SerpPlace | undefined = json.place_results || json.local_results?.[0];
+    console.log(`[SERP find] q="${query}" -> ${place?.title ?? "—"} (${place?.rating ?? "?"}★/${place?.reviews ?? 0})`);
+    return place ?? null;
+  } catch (e) {
+    console.log("[SERP find] throw:", String(e));
+    return null;
+  }
+}
+
+type SerpReview = { author: string; rating: number; text: string };
+
+// Texto das avaliações recentes (para a análise do modelo).
+async function serpReviews(dataId: string): Promise<SerpReview[]> {
+  if (!dataId) return [];
+  try {
+    const url = `${SERP}?engine=google_maps_reviews&data_id=${encodeURIComponent(dataId)}&hl=pt&api_key=${SERP_KEY}`;
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.error) {
+      console.log("[SERP reviews] error:", json.error);
+      return [];
+    }
+    return (json.reviews || []).map((r: { user?: { name?: string }; rating?: number; snippet?: string; extracted_snippet?: string }) => ({
+      author: r.user?.name ?? "Anónimo",
+      rating: Number(r.rating) || 0,
+      text: r.snippet ?? r.extracted_snippet ?? "",
+    }));
+  } catch {
+    return [];
+  }
 }
 
 type Competitor = { name: string; rating: number; reviews: number };
 
-// Concorrentes REAIS: Nearby Search (New) do mesmo tipo, na zona do negócio.
-async function findCompetitors(
+// Concorrentes REAIS: negócios do mesmo tipo, na mesma zona (Google Maps via SerpApi).
+async function serpCompetitors(
+  type: string,
   lat: number,
   lng: number,
-  primaryType: string,
-  types: string[],
-  selfPlaceId: string
-): Promise<{ list: Competitor[]; areaAvg: number | null; rankPercentile: number | null; total: number }> {
-  const empty = { list: [] as Competitor[], areaAvg: null, rankPercentile: null, total: 0 };
-  const generic = new Set(["point_of_interest", "establishment", "food", "store", "premise"]);
-  const type =
-    primaryType && !generic.has(primaryType)
-      ? primaryType
-      : (types || []).find((t) => !generic.has(t)) || (types || [])[0];
+  selfId: string,
+  selfName: string
+): Promise<{ list: Competitor[]; areaAvg: number | null; total: number }> {
+  const empty = { list: [] as Competitor[], areaAvg: null, total: 0 };
   if (!type || !lat || !lng) return empty;
+  const norm = (s: string) => s.toLowerCase().trim();
+  const selfNorm = norm(selfName || "");
   try {
-    const res = await fetch(`${PLACES}/places:searchNearby`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": KEY ?? "",
-        "X-Goog-FieldMask": "places.id,places.displayName,places.rating,places.userRatingCount",
-      },
-      body: JSON.stringify({
-        includedTypes: [type],
-        maxResultCount: 15,
-        rankPreference: "DISTANCE",
-        locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: 5000 } },
-        languageCode: "pt",
-      }),
-    });
+    const url = `${SERP}?engine=google_maps&type=search&q=${encodeURIComponent(type)}&ll=@${lat},${lng},15z&hl=pt&gl=pt&api_key=${SERP_KEY}`;
+    const res = await fetch(url);
     const json = await res.json();
-    if (!res.ok) {
-      console.log("[COMPET] error:", JSON.stringify(json).slice(0, 200));
+    if (json.error) {
+      console.log("[SERP compet] error:", json.error);
       return empty;
     }
-    const list: Competitor[] = (json.places || [])
-      .filter((p: { id?: string; rating?: number }) => p.id !== selfPlaceId && typeof p.rating === "number")
-      .map((p: { displayName?: { text?: string }; rating?: number; userRatingCount?: number }) => ({
-        name: p.displayName?.text ?? "Concorrente",
-        rating: p.rating ?? 0,
-        reviews: p.userRatingCount ?? 0,
+    const seen = new Set<string>();
+    const list: Competitor[] = (json.local_results || [])
+      .filter((r: { data_id?: string; title?: string; rating?: number }) =>
+        r.data_id !== selfId && norm(r.title || "") !== selfNorm && typeof r.rating === "number"
+      )
+      .filter((r: { title?: string }) => {
+        const k = norm(r.title || "");
+        if (!k || seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .map((r: { title?: string; rating?: number; reviews?: number }) => ({
+        name: r.title ?? "Concorrente",
+        rating: Number(r.rating) || 0,
+        reviews: Number(r.reviews) || 0,
       }))
       .slice(0, 10);
     const areaAvg = list.length
       ? Number((list.reduce((a, c) => a + c.rating, 0) / list.length).toFixed(1))
       : null;
-    return { list: list.slice(0, 5), areaAvg, rankPercentile: null, total: list.length };
+    return { list: list.slice(0, 5), areaAvg, total: list.length };
   } catch {
     return empty;
   }
@@ -230,8 +231,8 @@ export async function POST(request: Request) {
     }
 
     // Degradação graciosa: se faltar uma chave, não rebenta — avisa que está em configuração.
-    if (!GEMINI_KEY || !KEY) {
-      console.log("[CONFIG] chave em falta:", { gemini: !!GEMINI_KEY, places: !!KEY });
+    if (!GEMINI_KEY || !SERP_KEY) {
+      console.log("[CONFIG] chave em falta:", { gemini: !!GEMINI_KEY, serpapi: !!SERP_KEY });
       return NextResponse.json(
         { error: "🔧 Ferramenta em configuração final. Volte dentro de instantes — estamos quase prontos." },
         { status: 503 }
@@ -263,12 +264,12 @@ export async function POST(request: Request) {
     console.log("[PARSE] bizName:", bizName);
 
     // Procura: primeiro pelo nome extraído, depois pelo input cru.
-    let places = bizName ? await searchPlace(bizName) : [];
-    if (!places.length && bizName !== link) {
-      places = await searchPlace(link);
+    let found = bizName ? await serpFind(bizName) : null;
+    if (!found && bizName !== link) {
+      found = await serpFind(link);
     }
 
-    if (!places.length) {
+    if (!found) {
       console.log("[FINAL] Nenhum resultado encontrado");
       return NextResponse.json(
         {
@@ -279,32 +280,28 @@ export async function POST(request: Request) {
       );
     }
 
-    const place = places[0];
-    const placeId = place.id;
+    const name = found.title ?? "Empresa";
+    const rating = found.rating != null ? String(found.rating) : "N/A";
+    const totalReviews = found.reviews != null ? String(found.reviews) : "0";
+    const types = found.types ?? (found.type ? [found.type] : []);
+    const primaryType = found.type ?? types[0] ?? "";
+    const categoryLabel = found.type ?? types[types.length - 1] ?? "N/A";
+    const hasOpeningHours = !!(found.hours || found.operating_hours);
+    const hasPhotos = !!found.thumbnail;
+    const dataId = found.data_id ?? "";
+    const gps = found.gps_coordinates;
 
-    console.log("[FOUND] id:", placeId, "name:", place.displayName?.text);
-
-    const details = await getPlaceDetails(placeId);
-
-    const name = details.displayName?.text ?? place.displayName?.text ?? "Empresa";
-    const rating = details.rating != null ? String(details.rating) : "N/A";
-    const totalReviews = details.userRatingCount != null ? String(details.userRatingCount) : "0";
-    const types = details.types ?? place.types ?? [];
-    const primaryType = details.primaryType ?? place.primaryType ?? "";
-    const categoryLabel = details.primaryTypeDisplayName?.text ?? types[types.length - 1] ?? "N/A";
-    const hasOpeningHours = !!details.regularOpeningHours;
-    const photoCount = details.photos?.length ?? 0;
-
-    const rawReviews = details.reviews ?? [];
-    const reviews = rawReviews.map((r) => ({
-      text: r.text?.text ?? "",
-      rating: r.rating ?? 0,
-      author: r.authorAttribution?.displayName ?? "Anónimo",
-    }));
+    // Avaliações + concorrentes em paralelo (cada um falha em silêncio).
+    const [reviews, competitors] = await Promise.all([
+      serpReviews(dataId),
+      gps?.latitude && gps?.longitude
+        ? serpCompetitors(primaryType, gps.latitude, gps.longitude, dataId, name)
+        : Promise.resolve({ list: [] as Competitor[], areaAvg: null, total: 0 }),
+    ]);
 
     if (!reviews.length) {
       const completenessNoReviews = Math.round(
-        ([photoCount > 0, hasOpeningHours, types.length > 0].filter(Boolean).length / 5) * 100
+        ([hasPhotos, hasOpeningHours, types.length > 0].filter(Boolean).length / 5) * 100
       );
       return NextResponse.json({
         title: name,
@@ -314,23 +311,23 @@ export async function POST(request: Request) {
         score: 0,
         strengths: [],
         improvements: [
-          "Ainda não há avaliações neste perfil — peça a clientes satisfeitos para deixarem uma avaliação.",
-          photoCount > 0 ? null : "Adicione fotos reais do espaço, equipa e trabalhos.",
+          "Ainda não há avaliações visíveis — peça a clientes satisfeitos para deixarem uma avaliação.",
+          hasPhotos ? null : "Adicione fotos reais do espaço, equipa e trabalhos.",
           hasOpeningHours ? null : "Preencha os horários de funcionamento.",
         ].filter(Boolean),
         health: {
-          hasPhotos: photoCount > 0,
+          hasPhotos,
           hasOpeningHours,
           hasCategory: types.length > 0,
           profileCompleteness: completenessNoReviews,
         },
         missingProfileItems: [],
-        competitors: [],
-        areaAvg: null,
+        competitors: competitors.list,
+        areaAvg: competitors.areaAvg,
         rankPercentile: null,
         competitorInsights: null,
         leadImpact:
-          "Sem avaliações, o perfil aparece menos nas pesquisas e gera menos confiança em quem o encontra.",
+          "Sem avaliações visíveis, o perfil aparece menos nas pesquisas e gera menos confiança em quem o encontra.",
         actionPlan: [
           { acao: "Peça as primeiras avaliações a clientes recentes", impacto: "alto", prazo: "esta semana" },
           { acao: "Complete fotos, horários e categoria do perfil", impacto: "alto", prazo: "esta semana" },
@@ -348,12 +345,7 @@ export async function POST(request: Request) {
       ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
       : rating;
 
-    // ── Concorrentes REAIS (Places Nearby New) + métricas honestas ──
-    const loc = details.location;
-    const competitors = loc?.latitude && loc?.longitude
-      ? await findCompetitors(loc.latitude, loc.longitude, primaryType, types, placeId)
-      : { list: [], areaAvg: null, rankPercentile: null, total: 0 };
-    const myRating = Number(details.rating) || Number(avgRating) || 0;
+    const myRating = Number(found.rating) || Number(avgRating) || 0;
     const betterOrEqual = competitors.list.filter((c) => myRating >= c.rating).length;
     const rankPercentile = competitors.total
       ? Math.round((betterOrEqual / competitors.total) * 100)
@@ -361,10 +353,10 @@ export async function POST(request: Request) {
     // Completude do perfil = sinais REAIS verificáveis (não inventado)
     const profileCompleteness = Math.round(
       ([
-        photoCount > 0,
+        hasPhotos,
         hasOpeningHours,
         types.length > 0,
-        Number(details.rating) >= 4,
+        Number(found.rating) >= 4,
         Number(totalReviews) >= 10,
       ].filter(Boolean).length / 5) * 100
     );
@@ -376,11 +368,11 @@ export async function POST(request: Request) {
 
 EMPRESA: ${name}
 CATEGORIA: ${categoryLabel}
-NOTA MÉDIA: ${avgRating}
-TOTAL AVALIAÇÕES: ${totalReviews}
-TEM FOTOS: ${photoCount > 0 ? `Sim (${photoCount} fotos)` : "Não"}
+NOTA MÉDIA REAL (Google): ${rating} (de 5)
+TOTAL DE AVALIAÇÕES: ${totalReviews}
+TEM FOTOS: ${hasPhotos ? "Sim" : "Não"}
 TEM HORÁRIOS: ${hasOpeningHours ? "Sim" : "Não"}
-AVALIAÇÕES RECENTES:
+AMOSTRA DE AVALIAÇÕES RECENTES (não representa a nota global — é só uma amostra para perceberes o tom):
 ${reviewsSummary}
 
 CONCORRENTES REAIS NA ZONA (dados do Google Maps, mesmo tipo de negócio):
@@ -432,13 +424,13 @@ REGRAS:
       improvements: parsed.improvements ?? [],
       // Saúde do perfil: sinais REAIS verificados (sem percentagem inventada).
       health: {
-        hasPhotos: parsedHealth.hasPhotos ?? photoCount > 0,
+        hasPhotos: parsedHealth.hasPhotos ?? hasPhotos,
         hasOpeningHours: parsedHealth.hasOpeningHours ?? hasOpeningHours,
         hasCategory: parsedHealth.hasCategory ?? types.length > 0,
         profileCompleteness,
       },
       missingProfileItems: parsed.missingProfileItems ?? [],
-      // Concorrência REAL (Google Places Nearby, mesmo tipo, mesma zona)
+      // Concorrência REAL (mesmo tipo, mesma zona)
       competitors: competitors.list,
       areaAvg: competitors.areaAvg,
       rankPercentile,
@@ -456,7 +448,7 @@ REGRAS:
 
     // Mensagens mais amigáveis
     let friendlyError = message;
-    if (message.includes("GOOGLE_PLACES_API_KEY") || message.includes("API key not valid")) {
+    if (message.includes("SERPAPI") || message.includes("serpapi")) {
       friendlyError = "🔧 Serviço temporariamente indisponível. A equipa Diagnóstico PontoFinal foi notificada.";
     } else if (message.includes("Gemini") || message.includes("GEMINI_API_KEY") || message.includes("AI_PARSE_FAIL")) {
       friendlyError = "🧠 A inteligência artificial está temporariamente indisponível. Tente novamente em instantes.";

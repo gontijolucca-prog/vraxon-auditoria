@@ -1,56 +1,45 @@
 # Diagnóstico PontoFinal — Estado e pendências (handoff)
 
 > Antiga "VRAXON". Rebrand total para **Diagnóstico PontoFinal** + redesign a condizer com
-> pontofinal.site + todas as promessas do site tornadas reais. Tudo provado em produção.
+> pontofinal.site + todas as promessas reais. **A ferramenta funciona a 100% e está provada em produção.**
 
-## ✅ Feito e PROVADO
-- **Rebrand total**: zero "VRAXON" em qualquer página, email, legal ou metadados.
-- **Redesign** neo-brutalista PontoFinal (tema claro, preto/branco/vermelho #FF2A2A, fundo
-  pontilhado, Archivo + JetBrains Mono). Desktop e telemóvel verificados por captura de ecrã.
-- **Concorrência REAL**: o relatório lista concorrentes verdadeiros da zona (Google Places
-  Nearby, mesmo tipo de negócio), média de nota da zona e percentil honesto. Sem números inventados.
-- **Saúde do perfil honesta**: completude calculada de 5 sinais reais (fotos, horário, categoria,
-  nota, volume). Removida a "taxa de resposta" que era inventada.
-- **Plano de ação** concreto (3–5 passos com impacto e prazo).
-- **Guia "5 erros no Google Maps" REAL** em PDF (`/guia-5-erros-google-maps.pdf`), anexado no
-  email ao lead. **Entrega confirmada** (Resend `last_event: delivered`).
-- **Leads**: aviso para **geral@pontofinal.site** + cópia **pontofinalsite@gmail.com**;
-  botões WhatsApp **Lucca (915 136 439)** e **Ruben (913 752 933)**; consentimento RGPD e
-  evento Meta Pixel `Lead` mantidos.
-- **Estatísticas**: as não verificáveis (35%/3x) foram substituídas; a de avaliações cita fonte
-  (BrightLocal).
-- **Legal**: corrigido um claim falso herdado (dizia Vercel + Privacy Shield → agora Cloudflare +
-  Resend + cláusulas contratuais-tipo da UE).
-- **Deploy**: `npm run cf:deploy` na conta com a zona pontofinal.site. **noindex mantido**
-  (meta + robots.txt). Build + lint + typecheck verdes.
+## ✅ A FUNCIONAR (provado ao vivo)
+- **Auditoria real end-to-end**: cola-se um negócio → puxa nota, avaliações, fotos, horário,
+  categoria e **concorrentes reais da zona** do Google Maps → o modelo gera relatório, plano de
+  ação e comparação. Testado em produção com negócios reais (ex.: A Padaria Portuguesa, 4★/1431
+  avaliações, 5 concorrentes reais).
+- **Sem chave Google / sem cartão**: os dados do Google Maps vêm via **SerpApi** (faz o scrape do
+  Maps e devolve JSON). Token grátis no Worker (`SERPAPI_KEY`). O Gemini escreve a análise (`GEMINI_API_KEY`).
+- **Rebrand total** (zero VRAXON) + **redesign** neo-brutalista PontoFinal. Desktop + telemóvel.
+- **Guia "5 erros no Google Maps"** em PDF, anexado por email ao lead (entrega confirmada via Resend).
+- **Leads**: aviso para geral@pontofinal.site + cc pontofinalsite@gmail.com; WhatsApp **só do Ruben**
+  (351913752933); consentimento RGPD + evento Meta Pixel `Lead`.
+- **Deploy** Cloudflare Worker, **noindex mantido** (meta + robots). Build/lint/typecheck verdes.
 
-## ⚠️ Pendente (precisa do Ruben / decisão) — para o site funcionar a 100%
-| O quê | Porquê | Onde mete |
-|---|---|---|
-| **GOOGLE_PLACES_API_KEY** | É a chave do Ruben (precisa billing + Places API legacy). Sem ela a auditoria mostra "em configuração" (503 limpo, não rebenta). | Secret no Cloudflare |
-| **GEMINI_API_KEY** | Gera o texto do relatório. Pode ser uma chave grátis do Google AI Studio (do Lucca). | Secret no Cloudflare |
-| **Flip do noindex** | Para ir a público: `NEXT_PUBLIC_NOINDEX=false` e redeploy. | Var no Cloudflare |
-| **NEXT_PUBLIC_META_PIXEL_ID** | Medir conversões dos anúncios. | Var no Cloudflare |
+## ⚙️ Secrets no Worker (conta a2cff060…)
+- `SERPAPI_KEY` ✅ (dados do Google Maps — grátis)
+- `GEMINI_API_KEY` ✅ (texto da análise — grátis)
+- `RESEND_API_KEY` ✅ (emails)
 
-> O remetente **diagnostico@pontofinal.site** já está verificado no Resend (testado, entrega ok).
+## ⚠️ A ter em conta
+| O quê | Detalhe |
+|---|---|
+| **Limite SerpApi grátis** | ~250 pesquisas/mês. Cada auditoria gasta ~2–3 → **~80–100 auditorias/mês grátis**. Chega para o teste de ads. Acima disso: plano pago SerpApi **ou** chave Google billing (Ruben). |
+| **Flip do noindex** | Para ir a público: `NEXT_PUBLIC_NOINDEX=false` + redeploy. |
+| **NEXT_PUBLIC_META_PIXEL_ID** | Para medir conversões dos anúncios (var no Cloudflare). |
+| **Alternativa de escala** | Se o volume crescer, trocar SerpApi → Google Places (New) com billing do Ruben (código já tem o histórico dessa versão no Git). |
 
-## Como meter os secrets
+## Como mexer
 ```bash
-export CLOUDFLARE_API_TOKEN=...   # token com Workers Scripts:Edit na conta a2cff060…
+export CLOUDFLARE_API_TOKEN=...   # token da conta a2cff060…
 export CLOUDFLARE_ACCOUNT_ID=a2cff0602323a3b179fd8581371c603d
-printf 'A_CHAVE' | npx wrangler secret put GOOGLE_PLACES_API_KEY
-printf 'A_CHAVE' | npx wrangler secret put GEMINI_API_KEY
-npx wrangler deploy
+printf 'CHAVE' | npx wrangler secret put SERPAPI_KEY   # (ou GEMINI_API_KEY / RESEND_API_KEY)
+npm run cf:deploy
+node scripts/build-guide-pdf.mjs                       # regenerar o guia PDF
 ```
 
-## Como regenerar o guia PDF (se mudar o conteúdo)
-```bash
-node scripts/build-guide-pdf.mjs   # escreve public/guia-5-erros-google-maps.pdf
-```
-
-## Provas (o que foi corrido e observado)
-- Homepage live: título "Diagnóstico PontoFinal…", `meta robots: noindex, nofollow`, robots.txt `Disallow: /`.
-- `/api/auditoria` → **503 gracioso** (faltam Gemini/Places — comportamento correto até às chaves).
-- `/guia-5-erros-google-maps.pdf` → 200 `application/pdf`.
-- `/api/lead` → 200; email + guia **entregue** (Resend).
-- Render do relatório (concorrência real, plano de ação, saúde honesta) verificado em desktop e telemóvel.
+## Provas (corridas e observadas)
+- Homepage live: título "Diagnóstico PontoFinal…", `noindex,nofollow`, robots `Disallow: /`.
+- `POST /api/auditoria` com negócio real → JSON com nota/avaliações/score/**5 concorrentes reais**/plano.
+- `/guia-5-erros-google-maps.pdf` → 200; `/api/lead` → email + guia entregue (Resend).
+- Relatório renderizado ao vivo no browser (desktop) com dados reais.
