@@ -10,5 +10,11 @@
   },
   "observability": {
     "enabled": true
+  },
+  "vars": {
+    "NEXT_PUBLIC_SITE_URL": "https://diagnostico.pontofinal.site",
+    "NEXT_PUBLIC_NOINDEX": "true",
+    "NEXT_PUBLIC_WHATSAPP": "351913752933",
+    "LEAD_EMAIL_TO": "ruben_frazao98@outlook.pt"
   }
 }

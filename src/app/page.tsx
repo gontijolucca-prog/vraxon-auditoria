@@ -432,6 +432,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...leadData, company: result?.title, score: result?.score }),
       });
+      (window as unknown as { fbq?: (...a: unknown[]) => void }).fbq?.("track", "Lead");
     } catch { /* silent */ }
 
     setShowConfirm(true);
