@@ -225,7 +225,7 @@ function DashboardSkeleton() {
       </div>
 
       {/* Skeleton preview */}
-      <div className="space-y-4" variants={staggerContainer}>
+      <div className="space-y-4">
         <Skeleton className="h-14" />
         <div className="flex gap-4">
           <Skeleton className="h-36 flex-1" />
@@ -282,10 +282,17 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 function LeadMagnetSection() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
     setSent(true);
+    try {
+      await fetch("/api/lead", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Pedido de guia", email: email.trim(), whatsapp: "—", company: "Guia 5 erros" }),
+      });
+    } catch { /* silent */ }
     setTimeout(() => setSent(false), 3000);
     setEmail("");
   };
@@ -308,7 +315,7 @@ function LeadMagnetSection() {
         </motion.h2>
         <motion.p variants={fadeUp} className="mt-5 text-base text-muted-dim max-w-xl mx-auto leading-relaxed"
         >
-          Descarregue o nosso guio rápido com os 5 erros que 9 em cada 10 empresas cometem no Google Maps — e como corrigi-los hoje mesmo.
+          Receba o nosso guia rápido com os 5 erros mais comuns que as empresas cometem no Google Maps — e como corrigi-los hoje mesmo.
         </motion.p>
         <motion.form
           variants={fadeUp}
@@ -380,6 +387,7 @@ export default function Home() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [consent, setConsent] = useState(false);
   const dashboardRef = useRef<HTMLDivElement>(null);
 
   /* ─── Handlers ─── */
@@ -416,7 +424,7 @@ export default function Home() {
 
   const handleLeadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!leadData.name || !leadData.email || !leadData.whatsapp) return;
+    if (!leadData.name || !leadData.email || !leadData.whatsapp || !consent) return;
 
     try {
       await fetch("/api/lead", {
@@ -486,7 +494,7 @@ export default function Home() {
 
   const reset = () => {
     setStep("initial"); setResult(null); setLink(""); setError("");
-    setLeadData({ name: "", email: "", whatsapp: "" }); setShowConfirm(false);
+    setLeadData({ name: "", email: "", whatsapp: "" }); setShowConfirm(false); setConsent(false);
   };
 
   /* ─── RENDER ─── */
@@ -749,14 +757,29 @@ export default function Home() {
                         className="w-full rounded-xl border border-border bg-background px-4 py-3.5 text-sm text-foreground placeholder-muted outline-none transition-all duration-300 focus:border-primary focus:ring-2 focus:ring-primary/30 hover:border-border-light shadow-inner-light"
                       />
                     </motion.div>
+                    <label className="flex items-start gap-2.5 text-[11px] leading-relaxed text-muted-dim cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={consent}
+                        onChange={(e) => setConsent(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-background accent-primary"
+                      />
+                      <span>
+                        Autorizo o contacto da equipa {SAAS_NAME} e o tratamento dos meus dados para
+                        este efeito, nos termos da{" "}
+                        <a href="/privacidade" target="_blank" className="text-primary underline underline-offset-2 hover:text-primary-hover">
+                          Política de Privacidade
+                        </a>.
+                      </span>
+                    </label>
                     <MotionButton
                       type="submit"
-                      disabled={!leadData.name || !leadData.email || !leadData.whatsapp}
+                      disabled={!leadData.name || !leadData.email || !leadData.whatsapp || !consent}
                       className="w-full rounded-xl bg-primary py-4 text-sm font-semibold text-white transition-all hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50 shadow-glow-sm btn-gradient"
                     >
                       Desbloquear Relatório Completo
                     </MotionButton>
-                    <p className="text-center text-[11px] text-muted-dim">Prometemos não enviar spam. Os seus dados estão seguros.</p>
+                    <p className="text-center text-[11px] text-muted-dim">Sem spam. Pode pedir a remoção dos dados a qualquer momento.</p>
                   </form>
                 </GlassCard>
               </motion.div>
@@ -1126,7 +1149,7 @@ export default function Home() {
             variants={staggerContainer}
           >
             {[
-              { n: "50+", l: "Empresas auditadas" },
+              { n: "100%", l: "Auditoria gratuita" },
               { n: "86%", l: "dos clientes leem avaliações" },
               { n: "35%", l: "mais receita com respostas" },
               { n: "3x", l: "mais visibilidade no mapa" },

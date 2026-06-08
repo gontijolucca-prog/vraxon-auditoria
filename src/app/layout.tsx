@@ -12,11 +12,17 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://diagnostico.pontofinal.site";
+// noindex por defeito até lançamento público; flip com NEXT_PUBLIC_NOINDEX=false
+const NOINDEX = process.env.NEXT_PUBLIC_NOINDEX !== "false";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: "VRAXON – Auditoria Grátis do seu perfil no Google Maps",
   description:
     "Descubra como a sua empresa aparece no Google Maps. Auditoria gratuita por IA com pontuação, pontos críticos e radar da concorrência.",
   icons: { icon: "/vraxon-logo.png" },
+  robots: NOINDEX ? { index: false, follow: false } : undefined,
 };
 
 const GA_ID = process.env.NEXT_PUBLIC_GA_ID;

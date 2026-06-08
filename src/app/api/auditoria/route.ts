@@ -9,6 +9,12 @@ const rateMap = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(ip: string): { ok: boolean; remaining: number } {
   const now = Date.now();
+  // Limpeza lazy (edge-safe: sem timers globais, que não sobrevivem em serverless/workers)
+  if (rateMap.size > 5000) {
+    for (const [key, entry] of rateMap) {
+      if (now > entry.resetAt) rateMap.delete(key);
+    }
+  }
   const entry = rateMap.get(ip);
   if (!entry || now > entry.resetAt) {
     rateMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
@@ -18,18 +24,30 @@ function checkRateLimit(ip: string): { ok: boolean; remaining: number } {
   return { ok: entry.count <= RATE_LIMIT_MAX, remaining: Math.max(0, RATE_LIMIT_MAX - entry.count) };
 }
 
-// Limpeza periódica da rate map (a cada 5 min)
-if (typeof setInterval !== "undefined") {
-  setInterval(() => {
-    const now = Date.now();
-    rateMap.forEach((entry, ip) => {
-      if (now > entry.resetAt) rateMap.delete(ip);
-    });
-  }, 300_000);
+// Extrai JSON mesmo quando o modelo devolve cercas ```json ou texto à volta.
+function parseJsonLoose(raw: string): Record<string, unknown> {
+  let s = raw.trim();
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  try {
+    return JSON.parse(s);
+  } catch {
+    const start = s.indexOf("{");
+    const end = s.lastIndexOf("}");
+    if (start !== -1 && end > start) {
+      try {
+        return JSON.parse(s.slice(start, end + 1));
+      } catch {
+        /* cai para o erro abaixo */
+      }
+    }
+    throw new Error("AI_PARSE_FAIL");
+  }
 }
 
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+
 async function askGemini(prompt: string): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -142,11 +160,27 @@ export async function POST(request: Request) {
       );
     }
 
+    // Degradação graciosa: se faltar uma chave, não rebenta — avisa que está em configuração.
+    if (!GEMINI_KEY || !KEY) {
+      console.log("[CONFIG] chave em falta:", { gemini: !!GEMINI_KEY, places: !!KEY });
+      return NextResponse.json(
+        { error: "🔧 Ferramenta em configuração final. Volte dentro de instantes — estamos quase prontos." },
+        { status: 503 }
+      );
+    }
+
     const { link: rawLink } = await request.json();
 
     if (!rawLink || typeof rawLink !== "string") {
       return NextResponse.json(
         { error: "Link do Google Maps é obrigatório." },
+        { status: 400 }
+      );
+    }
+
+    if (rawLink.length > 2000) {
+      return NextResponse.json(
+        { error: "O link enviado é demasiado longo. Cole apenas o URL do Google Maps ou o nome do negócio." },
         { status: 400 }
       );
     }
@@ -282,7 +316,7 @@ REGRAS:
       "Você é um auditor especialista em SEO local e Google Maps. Retorne APENAS JSON puro, sem markdown, sem código.\n\n" +
       prompt
     );
-    const parsed = JSON.parse(raw);
+    const parsed = parseJsonLoose(raw);
 
     return NextResponse.json({
       title: name,
@@ -316,7 +350,7 @@ REGRAS:
     let friendlyError = message;
     if (message.includes("GOOGLE_PLACES_API_KEY") || message.includes("API key not valid")) {
       friendlyError = "🔧 Serviço temporariamente indisponível. A equipa VRAXON foi notificada.";
-    } else if (message.includes("Gemini") || message.includes("GEMINI_API_KEY")) {
+    } else if (message.includes("Gemini") || message.includes("GEMINI_API_KEY") || message.includes("AI_PARSE_FAIL")) {
       friendlyError = "🧠 A inteligência artificial está temporariamente indisponível. Tente novamente em instantes.";
     } else if (message.includes("NOT_FOUND") || message.includes("ZERO_RESULTS")) {
       friendlyError = "🔍 Não encontrei este negócio no Google Maps. Verifique o link e tente novamente.";
