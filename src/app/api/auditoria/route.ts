@@ -2,6 +2,32 @@ import { NextResponse } from "next/server";
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
+// ─── Rate Limiting simples ───
+const RATE_LIMIT_WINDOW = 60_000; // 1 minuto
+const RATE_LIMIT_MAX = 10;        // máx. 10 pedidos/min/IP
+const rateMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(ip: string): { ok: boolean; remaining: number } {
+  const now = Date.now();
+  const entry = rateMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return { ok: true, remaining: RATE_LIMIT_MAX - 1 };
+  }
+  entry.count++;
+  return { ok: entry.count <= RATE_LIMIT_MAX, remaining: Math.max(0, RATE_LIMIT_MAX - entry.count) };
+}
+
+// Limpeza periódica da rate map (a cada 5 min)
+if (typeof setInterval !== "undefined") {
+  setInterval(() => {
+    const now = Date.now();
+    rateMap.forEach((entry, ip) => {
+      if (now > entry.resetAt) rateMap.delete(ip);
+    });
+  }, 300_000);
+}
+
 async function askGemini(prompt: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_KEY}`;
   const res = await fetch(url, {
@@ -46,6 +72,14 @@ async function getPlaceDetails(placeId: string) {
 }
 
 function extractCid(url: string): string | null {
+  // Formato moderno: ...!1s0x1234:0x5678... dentro de data=
+  const dataMatch = url.match(/!1s([a-f0-9x]+:[a-f0-9x]+)/i);
+  if (dataMatch) {
+    // O segundo número hexadecimal é o "cid" equivalente
+    const parts = dataMatch[1].split(":");
+    if (parts[1]) return BigInt(parts[1]).toString();
+  }
+
   const match = url.match(/[?&]cid=(\d+)/);
   if (match) return match[1];
 
@@ -63,7 +97,7 @@ function extractNameFromUrl(url: string): string | null {
     if (cleaned.length > 2) return cleaned;
   }
 
-  const placeMatch = url.match(/\/place\/([^/]+)/);
+  const placeMatch = url.match(/\/place\/([^/@?]+)/);
   if (placeMatch) return decodeURIComponent(placeMatch[1].replace(/\+/g, " "));
 
   const lqiMatch = url.match(/lqi=([^&]+)/);
@@ -77,19 +111,48 @@ function extractNameFromUrl(url: string): string | null {
     } catch {}
   }
 
+  // Extrair nome de search URLs (/search/...)
+  const searchMatch = url.match(/\/search\/([^/@?]+)/);
+  if (searchMatch) return decodeURIComponent(searchMatch[1].replace(/\+/g, " "));
+
   return null;
+}
+
+// Expandir URLs encurtadas (goo.gl, maps.app.goo.gl)
+async function expandShortUrl(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, { method: "HEAD", redirect: "manual" });
+    const location = res.headers.get("location");
+    if (location) return location;
+  } catch {}
+  return url;
 }
 
 export async function POST(request: Request) {
   try {
-    const { link } = await request.json();
+    // ─── Rate limiting ───
+    const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+      || request.headers.get("x-real-ip")
+      || "unknown";
+    const { ok: allowed, remaining } = checkRateLimit(ip);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "⚠️ Muitos pedidos num curto espaço de tempo. Aguarde 1 minuto antes de tentar novamente." },
+        { status: 429, headers: { "Retry-After": "60", "X-RateLimit-Remaining": "0" } }
+      );
+    }
 
-    if (!link || typeof link !== "string") {
+    const { link: rawLink } = await request.json();
+
+    if (!rawLink || typeof rawLink !== "string") {
       return NextResponse.json(
         { error: "Link do Google Maps é obrigatório." },
         { status: 400 }
       );
     }
+
+    // Expandir URLs encurtadas (goo.gl, maps.app.goo.gl)
+    const link = rawLink.includes("goo.gl") ? await expandShortUrl(rawLink) : rawLink;
 
     console.log("[INPUT] link recebido:", link);
 
@@ -248,6 +311,19 @@ REGRAS:
     const message =
       error instanceof Error ? error.message : "Erro interno do servidor";
     console.log("[ERROR]", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+
+    // Mensagens mais amigáveis
+    let friendlyError = message;
+    if (message.includes("GOOGLE_PLACES_API_KEY") || message.includes("API key not valid")) {
+      friendlyError = "🔧 Serviço temporariamente indisponível. A equipa VRAXON foi notificada.";
+    } else if (message.includes("Gemini") || message.includes("GEMINI_API_KEY")) {
+      friendlyError = "🧠 A inteligência artificial está temporariamente indisponível. Tente novamente em instantes.";
+    } else if (message.includes("NOT_FOUND") || message.includes("ZERO_RESULTS")) {
+      friendlyError = "🔍 Não encontrei este negócio no Google Maps. Verifique o link e tente novamente.";
+    } else if (message.includes("500") || message.includes("Internal")) {
+      friendlyError = "⚡ Erro interno. A equipa foi notificada. Tente novamente.";
+    }
+
+    return NextResponse.json({ error: friendlyError }, { status: 500 });
   }
 }

@@ -245,7 +245,7 @@ export function AnimatedProgress({
 
 export function PulseDot({ color = "#6366f1", size = 8 }: { color?: string; size?: number }) {
   return (
-    <span className="relative flex" style={{ width: size, height: size }}>
+    <span className="relative inline-flex" style={{ width: size, height: size }}>
       <span
         className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
         style={{ backgroundColor: color }}
