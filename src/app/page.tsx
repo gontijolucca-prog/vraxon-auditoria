@@ -49,8 +49,7 @@ type ResultData = {
 type Step = "initial" | "loading" | "lead" | "result";
 
 const SAAS_NAME = "Diagnóstico PontoFinal";
-const SAAS_WHATSAPP_RUBEN = process.env.NEXT_PUBLIC_WHATSAPP_RUBEN || "351913752933";
-const SAAS_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP || "351915136439";
+const SAAS_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP || "351913752933";
 
 /* ─── Cache ─── */
 const resultCache = new Map<string, ResultData>();
@@ -1211,9 +1210,7 @@ export default function Home() {
 
                 <p className="mt-4 text-center text-[12px] text-muted">
                   Fale connosco e implemente as correções ainda hoje —{" "}
-                  <a href={whatsappLink()} target="_blank" rel="noopener noreferrer" className="font-bold text-foreground underline decoration-primary decoration-2 underline-offset-2">Lucca</a>
-                  {" "}ou{" "}
-                  <a href={whatsappLink(SAAS_WHATSAPP_RUBEN)} target="_blank" rel="noopener noreferrer" className="font-bold text-foreground underline decoration-primary decoration-2 underline-offset-2">Ruben</a>.
+                  <a href={whatsappLink()} target="_blank" rel="noopener noreferrer" className="font-bold text-foreground underline decoration-primary decoration-2 underline-offset-2">a nossa equipa responde no WhatsApp</a>.
                 </p>
 
                 <MotionButton

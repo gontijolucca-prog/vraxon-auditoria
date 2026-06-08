@@ -66,55 +66,105 @@ async function askGemini(prompt: string): Promise<string> {
   return json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
 }
 
+// ─── Google Places API (NEW) ───
+// A API legacy (maps.googleapis.com/maps/api/place) já não é ativável em projetos novos.
+// Usamos a Places API (New) em places.googleapis.com/v1, com X-Goog-FieldMask.
 const KEY = process.env.GOOGLE_PLACES_API_KEY;
-const BASE = "https://maps.googleapis.com/maps/api/place";
+const PLACES = "https://places.googleapis.com/v1";
 
-async function searchPlace(query: string) {
-  const url = `${BASE}/textsearch/json?query=${encodeURIComponent(query)}&key=${KEY}&language=pt`;
-  const res = await fetch(url);
+type PlaceLite = { id: string; displayName?: { text?: string }; types?: string[]; primaryType?: string };
+
+// Procura por texto (Text Search New). Devolve a lista de places (já normalizada).
+async function searchPlace(query: string): Promise<PlaceLite[]> {
+  const res = await fetch(`${PLACES}/places:searchText`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": KEY ?? "",
+      "X-Goog-FieldMask": "places.id,places.displayName,places.types,places.primaryType",
+    },
+    body: JSON.stringify({ textQuery: query, languageCode: "pt", regionCode: "PT" }),
+  });
   const json = await res.json();
-  console.log(`[SEARCH] query="${query}" status=${json.status} results=${json.results?.length ?? 0}`);
-  if (json.status !== "OK") console.log("[SEARCH] error:", JSON.stringify(json));
-  return json;
+  if (!res.ok) console.log("[SEARCH] error:", JSON.stringify(json).slice(0, 300));
+  console.log(`[SEARCH] q="${query}" results=${json.places?.length ?? 0}`);
+  return json.places ?? [];
 }
 
-async function getPlaceDetails(placeId: string) {
+type PlaceDetails = {
+  id?: string;
+  displayName?: { text?: string };
+  rating?: number;
+  userRatingCount?: number;
+  reviews?: { rating?: number; text?: { text?: string }; authorAttribution?: { displayName?: string } }[];
+  photos?: unknown[];
+  regularOpeningHours?: unknown;
+  types?: string[];
+  primaryType?: string;
+  primaryTypeDisplayName?: { text?: string };
+  location?: { latitude?: number; longitude?: number };
+};
+
+async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
   const fields =
-    "place_id,name,rating,user_ratings_total,reviews,photos,opening_hours,types,formatted_address,vicinity,geometry/location";
-  const url = `${BASE}/details/json?place_id=${placeId}&fields=${fields}&key=${KEY}&language=pt&reviews_no_translations=true`;
-  const res = await fetch(url);
+    "id,displayName,rating,userRatingCount,reviews,photos,regularOpeningHours,types,primaryType,primaryTypeDisplayName,location";
+  const res = await fetch(`${PLACES}/places/${encodeURIComponent(placeId)}`, {
+    headers: {
+      "X-Goog-Api-Key": KEY ?? "",
+      "X-Goog-FieldMask": fields,
+      "Accept-Language": "pt",
+    },
+  });
   const json = await res.json();
-  console.log(`[DETAILS] place_id="${placeId}" status=${json.status}`);
-  if (json.status !== "OK") console.log("[DETAILS] error:", JSON.stringify(json));
+  if (!res.ok) console.log("[DETAILS] error:", JSON.stringify(json).slice(0, 300));
+  console.log(`[DETAILS] id="${placeId}" name=${json.displayName?.text ?? "?"}`);
   return json;
 }
 
 type Competitor = { name: string; rating: number; reviews: number };
 
-// Concorrentes REAIS: Places Nearby do mesmo tipo, na zona do negócio.
+// Concorrentes REAIS: Nearby Search (New) do mesmo tipo, na zona do negócio.
 async function findCompetitors(
   lat: number,
   lng: number,
+  primaryType: string,
   types: string[],
   selfPlaceId: string
 ): Promise<{ list: Competitor[]; areaAvg: number | null; rankPercentile: number | null; total: number }> {
-  const empty = { list: [], areaAvg: null, rankPercentile: null, total: 0 };
-  // tipo de negócio válido p/ Nearby (ignora genéricos)
+  const empty = { list: [] as Competitor[], areaAvg: null, rankPercentile: null, total: 0 };
   const generic = new Set(["point_of_interest", "establishment", "food", "store", "premise"]);
-  const type = (types || []).find((t) => !generic.has(t)) || (types || [])[0];
+  const type =
+    primaryType && !generic.has(primaryType)
+      ? primaryType
+      : (types || []).find((t) => !generic.has(t)) || (types || [])[0];
   if (!type || !lat || !lng) return empty;
   try {
-    const url = `${BASE}/nearbysearch/json?location=${lat},${lng}&rankby=distance&type=${encodeURIComponent(type)}&key=${KEY}&language=pt`;
-    const res = await fetch(url);
+    const res = await fetch(`${PLACES}/places:searchNearby`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": KEY ?? "",
+        "X-Goog-FieldMask": "places.id,places.displayName,places.rating,places.userRatingCount",
+      },
+      body: JSON.stringify({
+        includedTypes: [type],
+        maxResultCount: 15,
+        rankPreference: "DISTANCE",
+        locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: 5000 } },
+        languageCode: "pt",
+      }),
+    });
     const json = await res.json();
-    console.log(`[COMPET] type=${type} status=${json.status} results=${json.results?.length ?? 0}`);
-    if (json.status !== "OK") return empty;
-    const list: Competitor[] = (json.results || [])
-      .filter((r: { place_id?: string; rating?: number }) => r.place_id !== selfPlaceId && typeof r.rating === "number")
-      .map((r: { name?: string; rating?: number; user_ratings_total?: number }) => ({
-        name: r.name ?? "Concorrente",
-        rating: r.rating ?? 0,
-        reviews: r.user_ratings_total ?? 0,
+    if (!res.ok) {
+      console.log("[COMPET] error:", JSON.stringify(json).slice(0, 200));
+      return empty;
+    }
+    const list: Competitor[] = (json.places || [])
+      .filter((p: { id?: string; rating?: number }) => p.id !== selfPlaceId && typeof p.rating === "number")
+      .map((p: { displayName?: { text?: string }; rating?: number; userRatingCount?: number }) => ({
+        name: p.displayName?.text ?? "Concorrente",
+        rating: p.rating ?? 0,
+        reviews: p.userRatingCount ?? 0,
       }))
       .slice(0, 10);
     const areaAvg = list.length
@@ -124,24 +174,6 @@ async function findCompetitors(
   } catch {
     return empty;
   }
-}
-
-function extractCid(url: string): string | null {
-  // Formato moderno: ...!1s0x1234:0x5678... dentro de data=
-  const dataMatch = url.match(/!1s([a-f0-9x]+:[a-f0-9x]+)/i);
-  if (dataMatch) {
-    // O segundo número hexadecimal é o "cid" equivalente
-    const parts = dataMatch[1].split(":");
-    if (parts[1]) return BigInt(parts[1]).toString();
-  }
-
-  const match = url.match(/[?&]cid=(\d+)/);
-  if (match) return match[1];
-
-  const ftidMatch = url.match(/ftid=0x[0-9a-f]+:0x([0-9a-f]+)/i);
-  if (ftidMatch) return BigInt(`0x${ftidMatch[1]}`).toString();
-
-  return null;
 }
 
 function extractNameFromUrl(url: string): string | null {
@@ -227,26 +259,16 @@ export async function POST(request: Request) {
 
     console.log("[INPUT] link recebido:", link);
 
-    const cid = extractCid(link);
     const bizName = extractNameFromUrl(link);
+    console.log("[PARSE] bizName:", bizName);
 
-    console.log("[PARSE] cid:", cid, "bizName:", bizName);
-
-    let searchResult;
-
-    if (cid) {
-      searchResult = await searchPlace(`cid:${cid}`);
+    // Procura: primeiro pelo nome extraído, depois pelo input cru.
+    let places = bizName ? await searchPlace(bizName) : [];
+    if (!places.length && bizName !== link) {
+      places = await searchPlace(link);
     }
 
-    if (!searchResult?.results?.length && bizName) {
-      searchResult = await searchPlace(bizName);
-    }
-
-    if (!searchResult?.results?.length) {
-      searchResult = await searchPlace(link);
-    }
-
-    if (!searchResult?.results?.length) {
+    if (!places.length) {
       console.log("[FINAL] Nenhum resultado encontrado");
       return NextResponse.json(
         {
@@ -257,28 +279,27 @@ export async function POST(request: Request) {
       );
     }
 
-    const place = searchResult.results[0];
-    const placeId = place.place_id;
+    const place = places[0];
+    const placeId = place.id;
 
-    console.log("[FOUND] place_id:", placeId, "name:", place.name);
+    console.log("[FOUND] id:", placeId, "name:", place.displayName?.text);
 
-    const detailsResult = await getPlaceDetails(placeId);
-    const details = detailsResult.result || {};
+    const details = await getPlaceDetails(placeId);
 
-    const name = details.name ?? place.name ?? "Empresa";
-    const rating = details.rating?.toString() ?? "N/A";
-    const totalReviews = details.user_ratings_total?.toString() ?? "0";
+    const name = details.displayName?.text ?? place.displayName?.text ?? "Empresa";
+    const rating = details.rating != null ? String(details.rating) : "N/A";
+    const totalReviews = details.userRatingCount != null ? String(details.userRatingCount) : "0";
     const types = details.types ?? place.types ?? [];
-    const hasOpeningHours = !!details.opening_hours;
+    const primaryType = details.primaryType ?? place.primaryType ?? "";
+    const categoryLabel = details.primaryTypeDisplayName?.text ?? types[types.length - 1] ?? "N/A";
+    const hasOpeningHours = !!details.regularOpeningHours;
     const photoCount = details.photos?.length ?? 0;
 
-    const rawReviews: { author_name?: string; rating?: number; text?: string }[] =
-      details.reviews ?? [];
-
+    const rawReviews = details.reviews ?? [];
     const reviews = rawReviews.map((r) => ({
-      text: r.text ?? "",
+      text: r.text?.text ?? "",
       rating: r.rating ?? 0,
-      author: r.author_name ?? "Anónimo",
+      author: r.authorAttribution?.displayName ?? "Anónimo",
     }));
 
     if (!reviews.length) {
@@ -289,7 +310,7 @@ export async function POST(request: Request) {
         title: name,
         rating,
         totalReviews,
-        category: types[types.length - 1] ?? "N/A",
+        category: categoryLabel,
         score: 0,
         strengths: [],
         improvements: [
@@ -327,10 +348,10 @@ export async function POST(request: Request) {
       ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
       : rating;
 
-    // ── Concorrentes REAIS (Places Nearby) + métricas honestas ──
-    const loc = details.geometry?.location;
-    const competitors = loc
-      ? await findCompetitors(loc.lat, loc.lng, types, placeId)
+    // ── Concorrentes REAIS (Places Nearby New) + métricas honestas ──
+    const loc = details.location;
+    const competitors = loc?.latitude && loc?.longitude
+      ? await findCompetitors(loc.latitude, loc.longitude, primaryType, types, placeId)
       : { list: [], areaAvg: null, rankPercentile: null, total: 0 };
     const myRating = Number(details.rating) || Number(avgRating) || 0;
     const betterOrEqual = competitors.list.filter((c) => myRating >= c.rating).length;
@@ -354,7 +375,7 @@ export async function POST(request: Request) {
     const prompt = `És um auditor especialista em SEO local e Google Maps. Analisa este perfil comercial e devolve APENAS JSON puro, sem markdown. Escreve em português europeu (PT-PT, Acordo Ortográfico 1990), trata o leitor por "você", sem estrangeirismos.
 
 EMPRESA: ${name}
-CATEGORIA: ${types[types.length - 1] ?? "N/A"}
+CATEGORIA: ${categoryLabel}
 NOTA MÉDIA: ${avgRating}
 TOTAL AVALIAÇÕES: ${totalReviews}
 TEM FOTOS: ${photoCount > 0 ? `Sim (${photoCount} fotos)` : "Não"}
@@ -405,7 +426,7 @@ REGRAS:
       title: name,
       rating,
       totalReviews,
-      category: types[types.length - 1] ?? "N/A",
+      category: categoryLabel,
       score: parsed.score ?? 50,
       strengths: parsed.strengths ?? [],
       improvements: parsed.improvements ?? [],

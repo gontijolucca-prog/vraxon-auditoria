@@ -56,7 +56,7 @@ export default function Privacidade() {
 
           <h2 className={h2Class}>7. Contactos</h2>
           <p className={pClass}>Se tiver questões sobre esta política:</p>
-          <p className="text-sm text-muted">Diagnóstico PontoFinal — pontofinal.site<br/>Email: <strong className="text-primary">geral@pontofinal.site</strong><br/>WhatsApp: +351 915 136 439<br/></p>
+          <p className="text-sm text-muted">Diagnóstico PontoFinal — pontofinal.site<br/>Email: <strong className="text-primary">geral@pontofinal.site</strong><br/>WhatsApp: +351 913 752 933<br/></p>
         </div>
       </div>
     </div>

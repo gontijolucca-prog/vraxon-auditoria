@@ -12,7 +12,7 @@ const CC_EMAIL = process.env.LEAD_EMAIL_CC || "pontofinalsite@gmail.com";
 // Remetente: domínio pontofinal.site já verificado no Resend.
 const FROM = process.env.LEAD_FROM_EMAIL || "Diagnóstico PontoFinal <diagnostico@pontofinal.site>";
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://diagnostico.pontofinal.site";
-const WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP || "351915136439";
+const WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP || "351913752933";
 const GUIDE_URL = `${SITE_URL}/guia-5-erros-google-maps.pdf`;
 
 // Escapa HTML para não partir/injetar nos emails.
