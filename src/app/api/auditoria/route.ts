@@ -80,13 +80,50 @@ async function searchPlace(query: string) {
 
 async function getPlaceDetails(placeId: string) {
   const fields =
-    "place_id,name,rating,user_ratings_total,reviews,photos,opening_hours,types,formatted_address,vicinity";
+    "place_id,name,rating,user_ratings_total,reviews,photos,opening_hours,types,formatted_address,vicinity,geometry/location";
   const url = `${BASE}/details/json?place_id=${placeId}&fields=${fields}&key=${KEY}&language=pt&reviews_no_translations=true`;
   const res = await fetch(url);
   const json = await res.json();
   console.log(`[DETAILS] place_id="${placeId}" status=${json.status}`);
   if (json.status !== "OK") console.log("[DETAILS] error:", JSON.stringify(json));
   return json;
+}
+
+type Competitor = { name: string; rating: number; reviews: number };
+
+// Concorrentes REAIS: Places Nearby do mesmo tipo, na zona do negócio.
+async function findCompetitors(
+  lat: number,
+  lng: number,
+  types: string[],
+  selfPlaceId: string
+): Promise<{ list: Competitor[]; areaAvg: number | null; rankPercentile: number | null; total: number }> {
+  const empty = { list: [], areaAvg: null, rankPercentile: null, total: 0 };
+  // tipo de negócio válido p/ Nearby (ignora genéricos)
+  const generic = new Set(["point_of_interest", "establishment", "food", "store", "premise"]);
+  const type = (types || []).find((t) => !generic.has(t)) || (types || [])[0];
+  if (!type || !lat || !lng) return empty;
+  try {
+    const url = `${BASE}/nearbysearch/json?location=${lat},${lng}&rankby=distance&type=${encodeURIComponent(type)}&key=${KEY}&language=pt`;
+    const res = await fetch(url);
+    const json = await res.json();
+    console.log(`[COMPET] type=${type} status=${json.status} results=${json.results?.length ?? 0}`);
+    if (json.status !== "OK") return empty;
+    const list: Competitor[] = (json.results || [])
+      .filter((r: { place_id?: string; rating?: number }) => r.place_id !== selfPlaceId && typeof r.rating === "number")
+      .map((r: { name?: string; rating?: number; user_ratings_total?: number }) => ({
+        name: r.name ?? "Concorrente",
+        rating: r.rating ?? 0,
+        reviews: r.user_ratings_total ?? 0,
+      }))
+      .slice(0, 10);
+    const areaAvg = list.length
+      ? Number((list.reduce((a, c) => a + c.rating, 0) / list.length).toFixed(1))
+      : null;
+    return { list: list.slice(0, 5), areaAvg, rankPercentile: null, total: list.length };
+  } catch {
+    return empty;
+  }
 }
 
 function extractCid(url: string): string | null {
@@ -152,7 +189,7 @@ export async function POST(request: Request) {
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
       || request.headers.get("x-real-ip")
       || "unknown";
-    const { ok: allowed, remaining } = checkRateLimit(ip);
+    const { ok: allowed } = checkRateLimit(ip);
     if (!allowed) {
       return NextResponse.json(
         { error: "⚠️ Muitos pedidos num curto espaço de tempo. Aguarde 1 minuto antes de tentar novamente." },
@@ -245,6 +282,9 @@ export async function POST(request: Request) {
     }));
 
     if (!reviews.length) {
+      const completenessNoReviews = Math.round(
+        ([photoCount > 0, hasOpeningHours, types.length > 0].filter(Boolean).length / 5) * 100
+      );
       return NextResponse.json({
         title: name,
         rating,
@@ -252,16 +292,28 @@ export async function POST(request: Request) {
         category: types[types.length - 1] ?? "N/A",
         score: 0,
         strengths: [],
-        improvements: ["Nenhuma avaliação encontrada para análise."],
+        improvements: [
+          "Ainda não há avaliações neste perfil — peça a clientes satisfeitos para deixarem uma avaliação.",
+          photoCount > 0 ? null : "Adicione fotos reais do espaço, equipa e trabalhos.",
+          hasOpeningHours ? null : "Preencha os horários de funcionamento.",
+        ].filter(Boolean),
         health: {
           hasPhotos: photoCount > 0,
           hasOpeningHours,
           hasCategory: types.length > 0,
-          responseRate: 0,
+          profileCompleteness: completenessNoReviews,
         },
         missingProfileItems: [],
-        competitorInsights: "N/A",
-        leadImpact: "Sem dados suficientes para calcular.",
+        competitors: [],
+        areaAvg: null,
+        rankPercentile: null,
+        competitorInsights: null,
+        leadImpact:
+          "Sem avaliações, o perfil aparece menos nas pesquisas e gera menos confiança em quem o encontra.",
+        actionPlan: [
+          { acao: "Peça as primeiras avaliações a clientes recentes", impacto: "alto", prazo: "esta semana" },
+          { acao: "Complete fotos, horários e categoria do perfil", impacto: "alto", prazo: "esta semana" },
+        ],
         recommendationUrgency: "critical",
       });
     }
@@ -271,12 +323,35 @@ export async function POST(request: Request) {
       .map((r) => `- ${r.author} (${r.rating}★): ${r.text.slice(0, 300)}`)
       .join("\n");
 
-    const hasNegativePattern = reviews.filter((r) => r.rating <= 3).length > 2;
     const avgRating = reviews.length
       ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
       : rating;
 
-    const prompt = `Você é um auditor especialista em SEO local e Google Maps. Analise profundamente este perfil comercial e retorne APENAS JSON puro, sem markdown.
+    // ── Concorrentes REAIS (Places Nearby) + métricas honestas ──
+    const loc = details.geometry?.location;
+    const competitors = loc
+      ? await findCompetitors(loc.lat, loc.lng, types, placeId)
+      : { list: [], areaAvg: null, rankPercentile: null, total: 0 };
+    const myRating = Number(details.rating) || Number(avgRating) || 0;
+    const betterOrEqual = competitors.list.filter((c) => myRating >= c.rating).length;
+    const rankPercentile = competitors.total
+      ? Math.round((betterOrEqual / competitors.total) * 100)
+      : null;
+    // Completude do perfil = sinais REAIS verificáveis (não inventado)
+    const profileCompleteness = Math.round(
+      ([
+        photoCount > 0,
+        hasOpeningHours,
+        types.length > 0,
+        Number(details.rating) >= 4,
+        Number(totalReviews) >= 10,
+      ].filter(Boolean).length / 5) * 100
+    );
+    const competitorsBlock = competitors.list.length
+      ? competitors.list.map((c) => `- ${c.name}: ${c.rating}★ (${c.reviews} avaliações)`).join("\n")
+      : "(sem concorrentes do mesmo tipo encontrados na zona)";
+
+    const prompt = `És um auditor especialista em SEO local e Google Maps. Analisa este perfil comercial e devolve APENAS JSON puro, sem markdown. Escreve em português europeu (PT-PT, Acordo Ortográfico 1990), trata o leitor por "você", sem estrangeirismos.
 
 EMPRESA: ${name}
 CATEGORIA: ${types[types.length - 1] ?? "N/A"}
@@ -287,29 +362,35 @@ TEM HORÁRIOS: ${hasOpeningHours ? "Sim" : "Não"}
 AVALIAÇÕES RECENTES:
 ${reviewsSummary}
 
-Com base nestes dados, retorne este JSON exato:
+CONCORRENTES REAIS NA ZONA (dados do Google Maps, mesmo tipo de negócio):
+${competitorsBlock}
+MÉDIA DE NOTA DA ZONA: ${competitors.areaAvg ?? "N/D"}
+
+Com base nestes dados, devolve este JSON exato:
 {
   "score": 0-100,
   "strengths": ["ponto forte 1", "ponto forte 2"],
-  "improvements": ["ponto crítico 1", "ponto crítico 2", "ponto crítico 3"],
+  "improvements": ["ponto a melhorar 1", "ponto a melhorar 2", "ponto a melhorar 3"],
   "health": {
     "hasPhotos": true/false,
     "hasOpeningHours": true/false,
-    "hasCategory": true/false,
-    "responseRate": 0-100
+    "hasCategory": true/false
   },
   "missingProfileItems": ["O que falta no perfil"],
-  "competitorInsights": "Parágrafo comparando com concorrentes do mesmo nicho. Dê dicas específicas.",
-  "leadImpact": "Frase sobre quantos leads estão sendo perdidos e por qual motivo principal.",
+  "competitorInsights": "Parágrafo a comparar ESTE negócio com os concorrentes REAIS listados acima (usa os nomes e notas reais). Diz onde está à frente e onde está atrás.",
+  "leadImpact": "Frase honesta sobre o efeito do perfil na captação de clientes — sem inventar percentagens exactas.",
+  "actionPlan": [
+    {"acao": "passo concreto a fazer no perfil", "impacto": "alto|médio|baixo", "prazo": "esta semana|este mês"}
+  ],
   "recommendationUrgency": "critical" ou "warning" ou "ok"
 }
 
 REGRAS:
-- score: 0-100. Baseie-se em nota, engajamento do dono, fotos, horários e tom das avaliações.
-- improvements: itens ACIONÁVEIS.
-- health.responseRate: estime com base no padrão das avaliações.
-- competitorInsights: comparativo realista de como negócios do mesmo segmento podem estar melhores.
-- leadImpact: algo como "Com base nas avaliações, você pode estar perdendo até X% dos leads por [motivo]".
+- score: 0-100. Baseia-te em nota, fotos, horários, volume de avaliações e tom dos comentários.
+- improvements: itens ACIONÁVEIS, concretos.
+- competitorInsights: usa SÓ os concorrentes reais acima; nunca inventes nomes nem números.
+- leadImpact: honesto, sem percentagens inventadas (ex: "perfil sem fotos transmite menos confiança e leva clientes a escolher concorrentes com perfil mais completo").
+- actionPlan: 3 a 5 passos, ordenados por impacto, cada um realista para um dono de negócio executar sozinho.
 - recommendationUrgency: "critical" se nota < 4.0 ou sem fotos/horários. "warning" se nota entre 4.0-4.3. "ok" se nota > 4.3 e perfil completo.`;
 
     const raw = await askGemini(
@@ -317,6 +398,8 @@ REGRAS:
       prompt
     );
     const parsed = parseJsonLoose(raw);
+
+    const parsedHealth = (parsed.health ?? {}) as Record<string, unknown>;
 
     return NextResponse.json({
       title: name,
@@ -326,19 +409,23 @@ REGRAS:
       score: parsed.score ?? 50,
       strengths: parsed.strengths ?? [],
       improvements: parsed.improvements ?? [],
-      health: parsed.health ?? {
-        hasPhotos: photoCount > 0,
-        hasOpeningHours,
-        hasCategory: types.length > 0,
-        responseRate: hasNegativePattern ? 20 : 60,
+      // Saúde do perfil: sinais REAIS verificados (sem percentagem inventada).
+      health: {
+        hasPhotos: parsedHealth.hasPhotos ?? photoCount > 0,
+        hasOpeningHours: parsedHealth.hasOpeningHours ?? hasOpeningHours,
+        hasCategory: parsedHealth.hasCategory ?? types.length > 0,
+        profileCompleteness,
       },
       missingProfileItems: parsed.missingProfileItems ?? [],
-      competitorInsights:
-        parsed.competitorInsights ??
-        "Seus concorrentes diretos na região estão investindo em fotos profissionais e respondendo a todas as avaliações.",
+      // Concorrência REAL (Google Places Nearby, mesmo tipo, mesma zona)
+      competitors: competitors.list,
+      areaAvg: competitors.areaAvg,
+      rankPercentile,
+      competitorInsights: parsed.competitorInsights ?? null,
       leadImpact:
         parsed.leadImpact ??
-        "Perfil incompleto pode estar a custar clientes para os seus concorrentes.",
+        "Um perfil incompleto transmite menos confiança e leva clientes a escolher concorrentes com perfil mais completo.",
+      actionPlan: Array.isArray(parsed.actionPlan) ? parsed.actionPlan : [],
       recommendationUrgency: parsed.recommendationUrgency ?? "warning",
     });
   } catch (error: unknown) {
@@ -349,7 +436,7 @@ REGRAS:
     // Mensagens mais amigáveis
     let friendlyError = message;
     if (message.includes("GOOGLE_PLACES_API_KEY") || message.includes("API key not valid")) {
-      friendlyError = "🔧 Serviço temporariamente indisponível. A equipa VRAXON foi notificada.";
+      friendlyError = "🔧 Serviço temporariamente indisponível. A equipa Diagnóstico PontoFinal foi notificada.";
     } else if (message.includes("Gemini") || message.includes("GEMINI_API_KEY") || message.includes("AI_PARSE_FAIL")) {
       friendlyError = "🧠 A inteligência artificial está temporariamente indisponível. Tente novamente em instantes.";
     } else if (message.includes("NOT_FOUND") || message.includes("ZERO_RESULTS")) {

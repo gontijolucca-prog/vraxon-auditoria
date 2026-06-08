@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import Image from "next/image";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { motion, AnimatePresence } from "framer-motion";
@@ -35,18 +34,23 @@ type ResultData = {
     hasPhotos: boolean;
     hasOpeningHours: boolean;
     hasCategory: boolean;
-    responseRate: number;
+    profileCompleteness: number;
   };
   missingProfileItems: string[];
-  competitorInsights: string;
+  competitors: { name: string; rating: number; reviews: number }[];
+  areaAvg: number | null;
+  rankPercentile: number | null;
+  competitorInsights: string | null;
   leadImpact: string;
+  actionPlan: { acao: string; impacto: string; prazo: string }[];
   recommendationUrgency: "critical" | "warning" | "ok";
 };
 
 type Step = "initial" | "loading" | "lead" | "result";
 
-const SAAS_NAME = "VRAXON";
-const SAAS_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP || "351913752933";
+const SAAS_NAME = "Diagnóstico PontoFinal";
+const SAAS_WHATSAPP_RUBEN = process.env.NEXT_PUBLIC_WHATSAPP_RUBEN || "351913752933";
+const SAAS_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP || "351915136439";
 
 /* ─── Cache ─── */
 const resultCache = new Map<string, ResultData>();
@@ -57,15 +61,8 @@ const resultCache = new Map<string, ResultData>();
 function PageBackground() {
   return (
     <div className="pointer-events-none fixed inset-0 overflow-hidden z-0">
-      {/* Grid limpo */}
-      <div className="absolute inset-0 opacity-[0.03]" style={{
-        backgroundImage: `linear-gradient(rgba(99,102,241,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.4) 1px, transparent 1px)`,
-        backgroundSize: '64px 64px'
-      }} />
-      {/* Topo com gradiente muito suave */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-primary/[0.06] blur-[100px] rounded-full" />
-      {/* Linha horizontal fina no topo */}
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
+      {/* Fundo pontilhado é global (body::before). Aqui só uma barra vermelha no topo. */}
+      <div className="absolute top-0 left-0 right-0 h-1.5 bg-primary" />
     </div>
   );
 }
@@ -91,7 +88,7 @@ function ScoreGauge({ score }: { score: number }) {
       <div className="relative flex h-36 w-36 items-center justify-center">
         <div className="absolute inset-2 rounded-full blur-2xl" style={{ background: glowColor }} />
         <svg className="h-36 w-36 -rotate-90 relative z-10" viewBox="0 0 128 128">
-          <circle cx="64" cy="64" r={r} fill="none" stroke="#2a2a35" strokeWidth="6" />
+          <circle cx="64" cy="64" r={r} fill="none" stroke="#e5e5e5" strokeWidth="6" />
           <motion.circle
             cx="64" cy="64" r={r} fill="none" stroke={color} strokeWidth="6"
             strokeLinecap="round" strokeDasharray={circ}
@@ -444,7 +441,7 @@ export default function Home() {
     setPdfLoading(true);
     try {
       const canvas = await html2canvas(dashboardRef.current, {
-        backgroundColor: "#0b0b10",
+        backgroundColor: "#ffffff",
         scale: 2,
       });
       const imgData = canvas.toDataURL("image/png");
@@ -454,16 +451,16 @@ export default function Home() {
       const imgH = (canvas.height * pageW) / canvas.width;
 
       pdf.setFontSize(16);
-      pdf.setTextColor(99, 102, 241);
+      pdf.setTextColor(255, 42, 42);
       pdf.text("Auditoria de Visibilidade Digital", 14, 16);
       pdf.setFontSize(8);
       pdf.setTextColor(100, 100, 100);
       pdf.text(result?.title ? `Empresa: ${result.title}` : "", 14, 23);
-      pdf.setDrawColor(99, 102, 241);
+      pdf.setDrawColor(255, 42, 42);
       pdf.setLineWidth(0.5);
       pdf.line(14, 27, pageW - 14, 27);
 
-      let y = 34;
+      const y = 34;
       if (imgH + y + 20 > pageH) {
         const ratio = (pageH - y - 20) / imgH;
         pdf.addImage(imgData, "PNG", 0, y, pageW, imgH * ratio);
@@ -477,18 +474,18 @@ export default function Home() {
       pdf.line(14, footerY - 4, pageW - 14, footerY - 4);
       pdf.setFontSize(7);
       pdf.setTextColor(120, 120, 120);
-      pdf.text(`Relatório Gerado por ${SAAS_NAME} – Especialistas em Posicionamento Local. Contacto: ${SAAS_WHATSAPP}`, 14, footerY + 2);
+      pdf.text(`Relatório gerado por ${SAAS_NAME} · pontofinal.site · WhatsApp: ${SAAS_WHATSAPP}`, 14, footerY + 2);
 
       pdf.save(`Auditoria-${result?.title?.slice(0, 20) || "Maps"}.pdf`);
     } catch { /* */ }
     setPdfLoading(false);
   }, [result]);
 
-  const whatsappLink = () => {
+  const whatsappLink = (num: string = SAAS_WHATSAPP) => {
     const msg = encodeURIComponent(
-      "Olá! Acabei de analisar o relatório da minha empresa e gostava de perceber como podemos melhorar o nosso ranking no Google Maps. Podemos falar?"
+      "Olá! Acabei de fazer o diagnóstico do meu negócio no Google Maps e gostava de perceber como podemos melhorar. Podemos falar?"
     );
-    return `https://wa.me/${SAAS_WHATSAPP}?text=${msg}`;
+    return `https://wa.me/${num}?text=${msg}`;
   };
 
   const urgency = result ? URGENCY_MAP[result.recommendationUrgency] : URGENCY_MAP.warning;
@@ -517,8 +514,10 @@ export default function Home() {
             whileHover={{ scale: 1.02 }}
             transition={{ duration: 0.2 }}
           >
-            <Image src="/vraxon-logo.png" alt={SAAS_NAME} width={32} height={32} className="rounded-lg" />
-            <span className="text-lg font-bold tracking-tight text-foreground">{SAAS_NAME}</span>
+            <span className="inline-flex items-center bg-foreground px-2.5 py-1 text-white text-base font-extrabold tracking-tight">
+              PontoFinal<span className="text-primary">.</span>
+            </span>
+            <span className="hidden font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted sm:inline">Diagnóstico</span>
           </motion.a>
           <nav className="hidden items-center gap-6 text-sm text-muted sm:flex">
             <motion.a href="#como-funciona" className="transition-colors hover:text-foreground" whileHover={{ y: -1 }}>Como funciona</motion.a>
@@ -578,7 +577,7 @@ export default function Home() {
                   variants={fadeUp}
                   className="mb-6 inline-flex items-center gap-2 rounded-full border border-border-light bg-card/70 backdrop-blur-sm px-4 py-2 text-xs font-medium text-muted shadow-glow-sm"
                 >
-                  <PulseDot color="#6366f1" size={7} />
+                  <PulseDot color="#ff2a2a" size={7} />
                   Análise gratuita · Leva 30 segundos
                 </motion.div>
 
@@ -594,8 +593,8 @@ export default function Home() {
                   variants={fadeUp}
                   className="mt-5 text-base leading-relaxed text-muted sm:text-lg max-w-xl mx-auto"
                 >
-                  Cole o link do Google Maps do seu negócio. Em segundos, a nossa inteligência artificial
-                  analisa o seu perfil e mostra exatamente o que está a afastar potenciais clientes.
+                  Cole o link do Google Maps do seu negócio. Em segundos, analisamos o seu perfil
+                  e mostramos exatamente o que está a afastar potenciais clientes — com dados reais da concorrência da sua zona.
                 </motion.p>
 
                 <motion.form
@@ -636,11 +635,11 @@ export default function Home() {
                   variants={fadeUp}
                   className="mt-10 flex flex-wrap items-center justify-center gap-6 text-xs text-muted-dim"
                 >
-                  {["Análise por IA", "Comparativo com concorrentes", "Relatório em PDF"].map((text) => (
+                  {["Análise automática", "Concorrência real da zona", "Relatório em PDF"].map((text) => (
                     <motion.span
                       key={text}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border/50 bg-card/30"
-                      whileHover={{ scale: 1.05, borderColor: "rgba(99,102,241,0.3)", color: "#f2f2f5" }}
+                      whileHover={{ scale: 1.05, borderColor: "#050505", color: "#050505" }}
                       transition={{ duration: 0.2 }}
                     >
                       <svg className="h-3.5 w-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -905,23 +904,26 @@ export default function Home() {
                     <HealthRow label="Horário de funcionamento" ok={result.health.hasOpeningHours} />
                     <HealthRow label="Categoria definida" ok={result.health.hasCategory} />
                     <div className="flex items-center justify-between text-sm py-1">
-                      <span className="text-muted">Resposta a avaliações</span>
-                      <span className={`text-sm font-medium ${result.health.responseRate >= 50 ? "text-success-bright" : "text-danger-bright"}`}>
-                        {result.health.responseRate}%
+                      <span className="text-muted">Volume de avaliações</span>
+                      <span className="text-sm font-medium text-foreground">
+                        {result.totalReviews}
                       </span>
                     </div>
                   </div>
 
-                  {result.health.responseRate > 0 && (
-                    <div className="mt-5">
-                      <p className="mb-2 text-[11px] text-muted uppercase tracking-wider">Taxa de resposta</p>
-                      <AnimatedProgress
-                        value={result.health.responseRate}
-                        color={result.health.responseRate >= 50 ? "#34d399" : result.health.responseRate >= 25 ? "#fbbf24" : "#f87171"}
-                        duration={1.5}
-                      />
-                    </div>
-                  )}
+                  <div className="mt-5">
+                    <p className="mb-2 text-[11px] text-muted uppercase tracking-wider">
+                      Perfil completo · {result.health.profileCompleteness}%
+                    </p>
+                    <AnimatedProgress
+                      value={result.health.profileCompleteness}
+                      color={result.health.profileCompleteness >= 60 ? "#0f9d58" : result.health.profileCompleteness >= 40 ? "#c98a00" : "#ff2a2a"}
+                      duration={1.5}
+                    />
+                    <p className="mt-2 text-[11px] text-muted-dim">
+                      Calculado a partir de sinais reais do perfil: fotografias, horário, categoria, nota e número de avaliações.
+                    </p>
+                  </div>
 
                   {result.missingProfileItems.length > 0 && (
                     <motion.div
@@ -1035,17 +1037,101 @@ export default function Home() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                       </svg>
                     </span>
-                    Radar da Concorrência
+                    Concorrência na sua zona
                   </motion.h3>
-                  <motion.p
-                    className="mt-2 text-sm leading-relaxed text-muted whitespace-pre-line"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.25 }}
-                  >
-                    {result.competitorInsights}
-                  </motion.p>
+
+                  {result.competitors.length > 0 ? (
+                    <>
+                      <div className="mb-4 flex flex-wrap gap-3 text-xs">
+                        {result.areaAvg != null && (
+                          <span className="inline-flex items-center gap-1.5 border-2 border-foreground bg-card px-3 py-1.5 font-mono font-bold">
+                            Média da zona: {result.areaAvg}★
+                          </span>
+                        )}
+                        {result.rankPercentile != null && (
+                          <span className="inline-flex items-center gap-1.5 border-2 border-foreground bg-primary px-3 py-1.5 font-mono font-bold text-white">
+                            A sua nota ≥ {result.rankPercentile}% dos vizinhos
+                          </span>
+                        )}
+                      </div>
+                      <ul className="space-y-2">
+                        {result.competitors.map((c, i) => (
+                          <MotionListItem key={i} index={i}>
+                            <div className="flex items-center justify-between gap-3 border-2 border-foreground bg-card px-4 py-3">
+                              <span className="text-sm font-medium text-foreground truncate">{c.name}</span>
+                              <span className="flex shrink-0 items-center gap-1 font-mono text-sm font-bold text-foreground">
+                                {c.rating}★
+                                <span className="text-[11px] font-normal text-muted-dim">({c.reviews})</span>
+                              </span>
+                            </div>
+                          </MotionListItem>
+                        ))}
+                      </ul>
+                      <p className="mt-3 text-[11px] text-muted-dim">
+                        Concorrentes reais do mesmo tipo, mais próximos no Google Maps.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-dim">
+                      Não encontrámos concorrentes diretos do mesmo tipo nesta zona — o que pode ser uma oportunidade para dominar a pesquisa local.
+                    </p>
+                  )}
+
+                  {result.competitorInsights && (
+                    <motion.p
+                      className="mt-4 border-t border-border/50 pt-4 text-sm leading-relaxed text-muted whitespace-pre-line"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.25 }}
+                    >
+                      {result.competitorInsights}
+                    </motion.p>
+                  )}
                 </GlassCard>
+
+                {result.actionPlan.length > 0 && (
+                  <motion.div className="mb-6" variants={fadeUp}>
+                    <motion.h3
+                      className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-foreground"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.1 }}
+                    >
+                      <span className="flex h-5 w-5 items-center justify-center rounded bg-primary/10">
+                        <svg className="h-3.5 w-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                        </svg>
+                      </span>
+                      Plano de ação
+                    </motion.h3>
+                    <div className="space-y-3">
+                      {result.actionPlan.map((step, i) => (
+                        <MotionListItem key={i} index={i}>
+                          <div className="flex items-start gap-3 border-2 border-foreground bg-card p-4 shadow-glow-sm">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center bg-foreground font-mono text-sm font-bold text-white">
+                              {i + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium leading-snug text-foreground">{step.acao}</p>
+                              <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] font-mono uppercase tracking-wider">
+                                <span className={`px-2 py-0.5 border ${
+                                  String(step.impacto).toLowerCase().includes("alto") ? "border-primary text-primary"
+                                  : String(step.impacto).toLowerCase().includes("baix") ? "border-muted text-muted"
+                                  : "border-warning-bright text-warning-bright"
+                                }`}>
+                                  Impacto {step.impacto}
+                                </span>
+                                {step.prazo && (
+                                  <span className="px-2 py-0.5 border border-foreground text-muted">{step.prazo}</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </MotionListItem>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
 
                 <motion.div
                   variants={fadeUp}
@@ -1053,7 +1139,7 @@ export default function Home() {
                 >
                   <div className="flex items-start gap-4">
                     <motion.span
-                      className="text-2xl bg-gradient-to-br from-primary/20 to-purple-500/20 p-2 rounded-xl"
+                      className="text-2xl bg-primary/10 border-2 border-foreground p-2"
                       initial={{ rotate: 0 }}
                       animate={{ rotate: [0, -10, 10, -5, 0] }}
                       transition={{ delay: 0.5, duration: 0.6 }}
@@ -1095,7 +1181,7 @@ export default function Home() {
                         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        Baixar PDF
+                        Descarregar PDF
                       </>
                     )}
                   </MotionButton>
@@ -1111,7 +1197,7 @@ export default function Home() {
                     <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                       <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
                     </svg>
-                    Quero melhorar o meu ranking
+                    Falar com a equipa no WhatsApp
                     <motion.svg
                       className="h-4 w-4"
                       fill="none" stroke="currentColor" viewBox="0 0 24 24"
@@ -1123,7 +1209,12 @@ export default function Home() {
                   </motion.a>
                 </motion.div>
 
-                <p className="mt-4 text-center text-[11px] text-muted-dim">Fale connosco e implemente as correções ainda hoje.</p>
+                <p className="mt-4 text-center text-[12px] text-muted">
+                  Fale connosco e implemente as correções ainda hoje —{" "}
+                  <a href={whatsappLink()} target="_blank" rel="noopener noreferrer" className="font-bold text-foreground underline decoration-primary decoration-2 underline-offset-2">Lucca</a>
+                  {" "}ou{" "}
+                  <a href={whatsappLink(SAAS_WHATSAPP_RUBEN)} target="_blank" rel="noopener noreferrer" className="font-bold text-foreground underline decoration-primary decoration-2 underline-offset-2">Ruben</a>.
+                </p>
 
                 <MotionButton
                   onClick={reset}
@@ -1150,10 +1241,10 @@ export default function Home() {
             variants={staggerContainer}
           >
             {[
-              { n: "100%", l: "Auditoria gratuita" },
-              { n: "86%", l: "dos clientes leem avaliações" },
-              { n: "35%", l: "mais receita com respostas" },
-              { n: "3x", l: "mais visibilidade no mapa" },
+              { n: "100%", l: "Auditoria gratuita, sem compromisso" },
+              { n: "~90%", l: "dos consumidores lê avaliações antes de escolher um negócio local" },
+              { n: "Top 3", l: "concentram a maioria dos cliques no mapa local" },
+              { n: "30s", l: "para receber o seu diagnóstico" },
             ].map((stat) => (
               <motion.div
                 key={stat.n}
@@ -1169,6 +1260,9 @@ export default function Home() {
               </motion.div>
             ))}
           </motion.div>
+          <p className="mt-8 text-center text-[11px] text-muted-dim">
+            Fonte das avaliações: BrightLocal, Local Consumer Review Survey.
+          </p>
         </div>
       </section>
 
@@ -1249,8 +1343,8 @@ export default function Home() {
           <div className="mt-14 grid gap-8 sm:grid-cols-3">
             {[
               { n: "01", t: "Cole o link", d: "Copie o URL do Google Maps da sua empresa e cole no campo acima. Não precisa de registo." },
-              { n: "02", t: "IA analisa", d: "A nossa inteligência artificial examina as avaliações, fotografias, horários e reputação do seu perfil em segundos." },
-              { n: "03", t: "Receba o relatório", d: "Descarregue o PDF completo com pontuação, pontos críticos, radar da concorrência e um plano de ação personalizado." },
+              { n: "02", t: "Analisamos tudo", d: "Examinamos as avaliações, fotografias, horários e reputação do seu perfil — e comparamos com os concorrentes reais da sua zona." },
+              { n: "03", t: "Receba o relatório", d: "Descarregue o PDF completo com pontuação, pontos a melhorar, concorrência da zona e um plano de ação concreto." },
             ].map((item) => (
               <MotionCard
                 key={item.n}
@@ -1273,7 +1367,7 @@ export default function Home() {
       <div className="divider-glow" />
 
       <section id="beneficios" className="relative px-6 py-24">
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-purple-500/[0.02] to-transparent pointer-events-none" />
+        <div className="absolute inset-0 pointer-events-none" />
         <motion.div
           className="mx-auto max-w-5xl text-center relative z-10"
           initial="hidden"
@@ -1297,16 +1391,16 @@ export default function Home() {
             variants={fadeUp}
             className="mt-5 text-base text-muted-dim max-w-2xl mx-auto leading-relaxed"
           >
-            86% dos consumidores confiam em avaliações online tanto como em recomendações pessoais.
-            Um perfil mal cuidado no Google Maps pode estar a custar-lhe dezenas de clientes por dia
-            — que vão diretamente para os seus concorrentes.
+            Quem procura um negócio local começa quase sempre pelo Google Maps. Um perfil
+            mal cuidado transmite menos confiança e leva clientes a escolher concorrentes
+            com perfil mais completo — mesmo a poucos metros de si.
           </motion.p>
           <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { t: "Aumente o Faturamento", d: "Negócios que respondem a avaliações facturam até 35% mais." },
-              { t: "Domine o Bairro", d: "Perfis completos aparecem 3 vezes mais no mapa local." },
-              { t: "Reputação Automática", d: "Saiba exatamente onde atuar para blindar a sua classificação." },
-              { t: "Relatório Executivo", d: "Documento profissional para orientar as suas ações de marketing local." },
+              { t: "Mais clientes", d: "Responder a avaliações e completar o perfil influencia quem ainda está a decidir." },
+              { t: "Apareça primeiro", d: "Perfis completos e ativos tendem a aparecer mais alto na pesquisa local." },
+              { t: "Reputação sob controlo", d: "Saiba exatamente onde atuar para proteger a sua classificação." },
+              { t: "Relatório claro", d: "Documento simples para orientar as suas ações de marketing local." },
             ].map((b) => (
               <MotionCard
                 key={b.t}

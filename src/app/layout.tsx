@@ -1,15 +1,23 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo, Archivo_Black, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const archivo = Archivo({
+  variable: "--font-archivo",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800", "900"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const archivoBlack = Archivo_Black({
+  variable: "--font-archivo-black",
   subsets: ["latin"],
+  weight: "400",
+});
+
+const jetbrains = JetBrains_Mono({
+  variable: "--font-jetbrains",
+  subsets: ["latin"],
+  weight: ["500", "700"],
 });
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://diagnostico.pontofinal.site";
@@ -18,10 +26,10 @@ const NOINDEX = process.env.NEXT_PUBLIC_NOINDEX !== "false";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: "VRAXON – Auditoria Grátis do seu perfil no Google Maps",
+  title: "Diagnóstico PontoFinal – Auditoria grátis ao seu Google Maps",
   description:
-    "Descubra como a sua empresa aparece no Google Maps. Auditoria gratuita por IA com pontuação, pontos críticos e radar da concorrência.",
-  icons: { icon: "/vraxon-logo.png" },
+    "Descubra como o seu negócio aparece no Google Maps. Diagnóstico gratuito com pontuação, pontos a melhorar e comparação real com a concorrência da sua zona.",
+  icons: { icon: "/favicon.ico" },
   robots: NOINDEX ? { index: false, follow: false } : undefined,
 };
 
@@ -36,7 +44,7 @@ export default function RootLayout({
   return (
     <html
       lang="pt-PT"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${archivo.variable} ${archivoBlack.variable} ${jetbrains.variable} h-full antialiased`}
     >
       <body className="min-h-full">
         {GA_ID && (

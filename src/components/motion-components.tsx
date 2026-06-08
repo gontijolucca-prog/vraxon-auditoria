@@ -219,7 +219,7 @@ export function MotionListItem({
 
 export function AnimatedProgress({
   value,
-  color = "#6366f1",
+  color = "#ff2a2a",
   height = 8,
   duration = 1.2,
 }: {
@@ -243,7 +243,7 @@ export function AnimatedProgress({
 
 /* ────────────────── PULSE DOT ────────────────── */
 
-export function PulseDot({ color = "#6366f1", size = 8 }: { color?: string; size?: number }) {
+export function PulseDot({ color = "#ff2a2a", size = 8 }: { color?: string; size?: number }) {
   return (
     <span className="relative inline-flex" style={{ width: size, height: size }}>
       <span
@@ -308,7 +308,7 @@ export function GlassCard({
       animate="visible"
       variants={fadeScale}
       whileHover={{
-        borderColor: "rgba(99,102,241,0.3)",
+        borderColor: "rgba(255,42,42,0.3)",
         transition: { duration: 0.25 },
       }}
     >

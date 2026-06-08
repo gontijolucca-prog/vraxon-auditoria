@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Artefactos gerados pelo adaptador Cloudflare (não são código fonte):
+    ".open-next/**",
+    ".wrangler/**",
+    // Scripts utilitários Node (geração do guia PDF):
+    "scripts/**",
   ]),
 ]);
 
