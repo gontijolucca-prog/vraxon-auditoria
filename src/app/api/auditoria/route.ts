@@ -206,14 +206,38 @@ function extractNameFromUrl(url: string): string | null {
   return null;
 }
 
-// Expandir URLs encurtadas (goo.gl, maps.app.goo.gl)
-async function expandShortUrl(url: string): Promise<string> {
+// Domínios encurtadores conhecidos (Google e genéricos)
+const SHORTENER_HOSTS = [
+  "goo.gl", "maps.app.goo.gl", "g.co", "share.google",
+  "bit.ly", "tinyurl.com", "ow.ly", "t.co", "rebrand.ly",
+];
+
+function isShortUrl(url: string): boolean {
   try {
-    const res = await fetch(url, { method: "HEAD", redirect: "manual" });
-    const location = res.headers.get("location");
-    if (location) return location;
-  } catch {}
-  return url;
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    return SHORTENER_HOSTS.some((h) => host === h || host.endsWith("." + h));
+  } catch {
+    return false;
+  }
+}
+
+// Expandir URLs encurtadas seguindo múltiplos saltos (até 5).
+async function expandShortUrl(url: string): Promise<string> {
+  let current = url;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const res = await fetch(current, { method: "HEAD", redirect: "manual" });
+      const location = res.headers.get("location");
+      if (!location) break;
+      // Resolver locations relativas contra o URL atual.
+      current = new URL(location, current).toString();
+      // Parou de apontar para um encurtador → chegámos ao destino.
+      if (!isShortUrl(current)) break;
+    } catch {
+      break;
+    }
+  }
+  return current;
 }
 
 export async function POST(request: Request) {
@@ -255,8 +279,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Expandir URLs encurtadas (goo.gl, maps.app.goo.gl)
-    const link = rawLink.includes("goo.gl") ? await expandShortUrl(rawLink) : rawLink;
+    // Expandir URLs encurtadas (goo.gl, g.co, share.google, bit.ly, ...) seguindo múltiplos saltos.
+    const link = isShortUrl(rawLink) ? await expandShortUrl(rawLink) : rawLink;
 
     console.log("[INPUT] link recebido:", link);
 
