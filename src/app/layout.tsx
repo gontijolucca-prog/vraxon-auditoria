@@ -29,7 +29,6 @@ export const metadata: Metadata = {
   title: "Diagnóstico PontoFinal – Auditoria grátis ao seu Google Maps",
   description:
     "Descubra como o seu negócio aparece no Google Maps. Diagnóstico gratuito com pontuação, pontos a melhorar e comparação real com a concorrência da sua zona.",
-  icons: { icon: "/favicon.ico" },
   robots: NOINDEX ? { index: false, follow: false } : undefined,
 };
 
