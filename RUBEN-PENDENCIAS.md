@@ -2,9 +2,9 @@
 
 ## ✅ Feito
 - Código auditado e endurecido para produção. `npm run build` **verde**.
-- Site **live** (Cloudflare Worker) com **noindex** (pré-lançamento):
-  https://vraxon-auditoria.pontofinal.workers.dev
-- Deploy via OpenNext + Cloudflare (`npm run cf:deploy`). Resend ligado.
+- Site **LIVE** com **noindex** (pré-lançamento): **https://diagnostico.pontofinal.site**
+- Deploy via OpenNext + Cloudflare Worker (`npm run cf:deploy`), na conta que tem a zona
+  pontofinal.site (Gontijolucca). Resend ligado.
 - Pixel Meta integrado (env `NEXT_PUBLIC_META_PIXEL_ID`). Campanha Meta Ads preparada (sem gastar).
 
 ## Correções aplicadas
@@ -22,7 +22,7 @@
 |---|---|---|
 | **GOOGLE_PLACES_API_KEY** | Sem ela a auditoria devolve "em configuração". Precisa billing + Places API (legacy). | Secret no Cloudflare |
 | **GEMINI_API_KEY** | Gera o relatório por IA. (Alternativa: usar OpenRouter do Lucca.) | Secret no Cloudflare |
-| **Domínio** `diagnostico.pontofinal.site` | Atar o Worker ao subdomínio (precisa acesso à zona DNS). | Cloudflare DNS/Worker |
+| ~~Domínio diagnostico.pontofinal.site~~ | ✅ FEITO — live com noindex. | — |
 | **NEXT_PUBLIC_META_PIXEL_ID** | Medir conversões dos ads. | Var no Cloudflare |
 | **Domínio verificado no Resend** | Auto-reply chegar a leads externos (sandbox só chega ao dono). | Resend |
 
